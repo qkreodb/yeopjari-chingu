@@ -70,9 +70,9 @@ object Scenarios {
     }
 
     /** 회전교차로: 깜빡이 조건 없이 통과 여부만 본다. */
-    val roundabout = scenario("roundabout", "회전교차로 두 번째 출구") {
+    val roundabout = scenario("roundabout", "회전교차로 2시 방향 출구") {
         speedKmh = 30.0
-        approach("r1", ManeuverKind.ROUNDABOUT, Direction.NONE, fromM = 1_100, roundaboutExit = 2)
+        approach("r1", ManeuverKind.ROUNDABOUT, Direction.NONE, fromM = 1_100, roundaboutClock = 2)
         next("t2", ManeuverKind.TURN, Direction.RIGHT, remainingM = 900)
         drive(15_000)
     }

@@ -78,7 +78,7 @@ class ScenarioBuilder(
         direction: Direction,
         fromM: Int,
         toM: Int = 0,
-        roundaboutExit: Int? = null,
+        roundaboutClock: Int? = null,
         onDistance: ScenarioBuilder.(remainingM: Int) -> Unit = {},
     ) {
         require(speedKmh > 0) { "approach 는 움직이는 차에서만 쓸 수 있습니다(speedKmh=$speedKmh)." }
@@ -86,7 +86,7 @@ class ScenarioBuilder(
         while (true) {
             val r = remaining.toInt().coerceAtLeast(toM)
             onDistance(r)
-            events += ScenarioEvent.Tbt(TbtUpdate(timeMs, id, kind, direction, r, etaEpochSec, roundaboutExit))
+            events += ScenarioEvent.Tbt(TbtUpdate(timeMs, id, kind, direction, r, etaEpochSec, roundaboutClock))
             sample()
             if (r <= toM) break
             timeMs += stepMs

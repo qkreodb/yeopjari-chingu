@@ -7,20 +7,16 @@ application {
     mainClass.set("com.yeopjari.core.sim.TranscriptKt")
 }
 
-tasks.withType<JavaExec>().configureEach {
-    defaultCharacterEncoding = "UTF-8"
-}
-
-repositories {
-    mavenCentral()
-}
-
 kotlin {
     jvmToolchain(17)
 }
 
 dependencies {
     testImplementation(kotlin("test"))
+}
+
+tasks.withType<JavaExec>().configureEach {
+    defaultCharacterEncoding = "UTF-8"
 }
 
 tasks.test {

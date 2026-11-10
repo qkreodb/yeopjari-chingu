@@ -35,7 +35,7 @@ data class TbtUpdate(
     val direction: Direction,
     val remainingM: Int,
     val etaEpochSec: Long? = null,
-    val roundaboutExit: Int? = null,
+    val roundaboutClock: Int? = null,
 )
 
 /** 내비가 재탐색을 알려줄 때만 들어온다. 없으면 엔진이 TBT/ETA 변화로 추정한다. */

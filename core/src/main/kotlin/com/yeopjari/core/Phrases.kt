@@ -16,21 +16,22 @@ object Phrases {
         Direction.NONE -> ""
     }
 
-    private fun exit(n: Int?) = if (n != null && n > 0) " ${n}번째 출구예요." else ""
+    /** Pleos TBT 는 회전교차로 출구를 시계 방향(2시, 3시 …)으로 준다. */
+    private fun exit(clock: Int?) = if (clock != null && clock in 1..12) " ${clock}시 방향으로 나가요." else ""
 
-    fun pre1km(type: HardSpotType, d: Direction, roundaboutExit: Int? = null): String = when (type) {
+    fun pre1km(type: HardSpotType, d: Direction, roundaboutClock: Int? = null): String = when (type) {
         HardSpotType.MERGE -> "곧 ${side(d)}합류예요."
         HardSpotType.IC -> "곧 ${side(d)}IC 방향이에요."
         HardSpotType.SPLIT -> "곧 ${side(d)}갈림길이에요."
-        HardSpotType.ROUNDABOUT -> "곧 회전교차로예요.${exit(roundaboutExit)}"
+        HardSpotType.ROUNDABOUT -> "곧 회전교차로예요.${exit(roundaboutClock)}"
     }
 
     /** 400m 안내. 합류·IC는 깜빡이가 꺼져 있을 때만 쓰고, 꺼져 있다는 사실만 말한다. */
-    fun pre400m(type: HardSpotType, d: Direction, roundaboutExit: Int? = null): String = when (type) {
+    fun pre400m(type: HardSpotType, d: Direction, roundaboutClock: Int? = null): String = when (type) {
         HardSpotType.MERGE -> "400미터 뒤 ${side(d)}합류예요. 깜빡이는 아직 꺼져 있어요."
         HardSpotType.IC -> "400미터 뒤 ${side(d)}IC 방향이에요. 깜빡이는 아직 꺼져 있어요."
         HardSpotType.SPLIT -> "400미터 뒤 ${side(d)}길로 갈라져요."
-        HardSpotType.ROUNDABOUT -> "400미터 뒤 회전교차로예요.${exit(roundaboutExit)}"
+        HardSpotType.ROUNDABOUT -> "400미터 뒤 회전교차로예요.${exit(roundaboutClock)}"
     }
 
     /** 깜빡이를 읽을 수 없는 차에서 쓰는 400m 안내. 확인할 수 없는 사실은 말하지 않는다. */

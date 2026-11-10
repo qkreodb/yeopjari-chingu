@@ -67,7 +67,7 @@ class CoachEngine(
         val id: String,
         val type: HardSpotType,
         val direction: Direction,
-        val roundaboutExit: Int?,
+        val roundaboutClock: Int?,
         var lastRemainingM: Int,
         var lastUpdateMs: Long,
         var said1km: Boolean = false,
@@ -184,7 +184,7 @@ class CoachEngine(
         id = update.maneuverId,
         type = type,
         direction = update.direction,
-        roundaboutExit = update.roundaboutExit,
+        roundaboutClock = update.roundaboutClock,
         lastRemainingM = update.remainingM,
         lastUpdateMs = update.timeMs,
     )
@@ -228,7 +228,7 @@ class CoachEngine(
             if (level.pre1km) {
                 budget.enqueue(
                     update.timeMs, spot.key, UtteranceKind.PRE_1KM,
-                    Phrases.pre1km(spot.type, spot.direction, spot.roundaboutExit),
+                    Phrases.pre1km(spot.type, spot.direction, spot.roundaboutClock),
                 )
             }
         }
@@ -254,7 +254,7 @@ class CoachEngine(
                 else -> Phrases.pre400m(spot.type, spot.direction)
             }
         } else {
-            Phrases.pre400m(spot.type, spot.direction, spot.roundaboutExit)
+            Phrases.pre400m(spot.type, spot.direction, spot.roundaboutClock)
         }
         budget.enqueue(timeMs, spot.key, UtteranceKind.PRE_400M, text)
     }

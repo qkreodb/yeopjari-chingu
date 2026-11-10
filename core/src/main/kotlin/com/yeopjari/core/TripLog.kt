@@ -17,6 +17,10 @@ class TripLog {
 
     fun count(type: HardSpotType, result: SpotResult): Int = items.count { it.type == type && it.result == result }
 
+    /** 연습 사다리 입력. 필요한 조건(깜빡이 포함)이 모두 확인된 PASSED 만 센다. */
+    fun confirmedPassTotals(): Map<HardSpotType, Int> =
+        HardSpotType.entries.associateWith { count(it, SpotResult.PASSED) }
+
     /** 주차 후 한 문장 요약. 사실만 말한다. */
     fun summary(): String {
         val parts = HardSpotType.entries.mapNotNull { type ->

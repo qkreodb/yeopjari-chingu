@@ -1,12 +1,16 @@
 package com.yeopjari.core
 
 /**
- * 급제동 판정: 1초 안에 [dropKmh] 이상 감속했고, 감속 전 속도가 [minStartKmh] 이상이며,
- * 브레이크를 밟은 상태(읽을 수 있을 때)인 경우.
- * 정체 구간의 저속 제동을 빼기 위해 시작 속도 조건을 둔다.
+ * 급제동 판정: 최근 [lookbackMs] 안의 어느 시점(최고 속도 포함)과 비교해
+ * - [dropKmh] 이상 감속했고
+ * - 감속률이 초당 [dropKmh] 이상이며
+ * - 비교 시점의 속도가 [minStartKmh] 이상(정체 구간의 저속 제동 제외)이고
+ * - 브레이크를 밟은 상태(읽을 수 있을 때)인 경우.
+ *
+ * 차량 신호 콜백 간격이 1초보다 길어도 감속률로 판정할 수 있게 비교 범위를 넉넉히 둔다.
  */
 class HarshBrakeDetector(
-    private val windowMs: Long = 1_000,
+    private val lookbackMs: Long = 2_000,
     private val dropKmh: Double = 12.0,
     private val minStartKmh: Double = 30.0,
     private val debounceMs: Long = 3_000,
@@ -16,16 +20,21 @@ class HarshBrakeDetector(
 
     /** 이번 샘플에서 급제동이 새로 감지되면 true. */
     fun onSample(sample: VehicleSample): Boolean {
+        val candidates = recent.filter { sample.timeMs - it.timeMs in 1..lookbackMs }
         recent.addLast(sample)
-        while (recent.isNotEmpty() && sample.timeMs - recent.first().timeMs > windowMs) {
+        while (recent.isNotEmpty() && sample.timeMs - recent.first().timeMs > lookbackMs) {
             recent.removeFirst()
         }
+
         if (sample.brakePressed == false) return false
         val last = lastDetectedMs
         if (last != null && sample.timeMs - last < debounceMs) return false
 
-        val start = recent.firstOrNull { it.speedKmh >= minStartKmh } ?: return false
-        val detected = start.speedKmh - sample.speedKmh >= dropKmh
+        val detected = candidates.any { before ->
+            val drop = before.speedKmh - sample.speedKmh
+            val seconds = (sample.timeMs - before.timeMs) / 1000.0
+            before.speedKmh >= minStartKmh && drop >= dropKmh && drop / seconds >= dropKmh
+        }
         if (detected) lastDetectedMs = sample.timeMs
         return detected
     }

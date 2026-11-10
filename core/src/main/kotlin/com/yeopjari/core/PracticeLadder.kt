@@ -16,7 +16,10 @@ class PracticeLadder(
 
     val lastStage: Int get() = steps.size + 1
 
-    /** [passedTotals] 는 종류별 누적 PASSED 횟수(깜빡이까지 확인된 것). */
+    /**
+     * [passedTotals] 는 종류별 누적 PASSED 횟수(깜빡이까지 확인된 것)다.
+     * [TripLog.confirmedPassTotals] 를 누적해 넣는다. PASSED_NO_SIGNAL 을 섞으면 깜빡이 없이 단계가 오른다.
+     */
     fun stage(passedTotals: Map<HardSpotType, Int>): Int {
         var stage = 1
         for (step in steps) {

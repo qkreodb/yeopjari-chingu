@@ -15,7 +15,9 @@ data class GuidanceLevel(
 
 /**
  * 안내 줄이기(F12). 같은 종류를 연속으로 PASSED 하면 그 종류의 안내를 줄인다.
- * 0~4번: 전부, 5~9번: 400m만, 10번 이상: 없음. MISSED 가 나오면 0으로 돌아간다.
+ * 0~4번: 전부, 5~9번: 400m만, 10번 이상: 없음.
+ * MISSED 나 PASSED_NO_SIGNAL(깜빡이가 필요한 지점에서 깜빡이를 켜지 않음)이 나오면 0으로 돌아가
+ * 다시 전부 안내한다. 줄인 안내 때문에 필요한 도움을 못 받는 일이 없게 하기 위해서다.
  */
 class FadingState(
     var enabled: Boolean = true,
@@ -39,8 +41,8 @@ class FadingState(
     fun record(outcome: SpotOutcome) {
         when (outcome.result) {
             SpotResult.PASSED -> streaks[outcome.type] = streak(outcome.type) + 1
-            SpotResult.MISSED -> streaks[outcome.type] = 0
-            SpotResult.PASSED_NO_SIGNAL, SpotResult.UNCERTAIN -> Unit
+            SpotResult.MISSED, SpotResult.PASSED_NO_SIGNAL -> streaks[outcome.type] = 0
+            SpotResult.UNCERTAIN -> Unit
         }
     }
 

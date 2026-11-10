@@ -32,6 +32,20 @@ class HarshBrakeDetectorTest {
     }
 
     @Test
+    fun `신호 간격이 1초보다 길어도 감속률로 잡는다`() {
+        val d = HarshBrakeDetector()
+        d.onSample(s(0, 70.0))
+        assertTrue(d.onSample(s(2_000, 40.0)))
+    }
+
+    @Test
+    fun `완만한 감속은 차이가 커도 급제동이 아니다`() {
+        val d = HarshBrakeDetector()
+        d.onSample(s(0, 70.0))
+        assertFalse(d.onSample(s(2_000, 55.0)))
+    }
+
+    @Test
     fun `같은 제동을 두 번 세지 않는다`() {
         val d = HarshBrakeDetector()
         d.onSample(s(0, 80.0))
@@ -55,10 +69,13 @@ class FadingStateTest {
     }
 
     @Test
-    fun `놓치면 처음으로, 깜빡이 없는 통과는 그대로`() {
+    fun `놓치거나 깜빡이 없이 지나면 처음부터 다시 전부 안내한다`() {
         val f = FadingState()
-        repeat(6) { f.record(outcome(SpotResult.PASSED)) }
+        repeat(10) { f.record(outcome(SpotResult.PASSED)) }
         f.record(outcome(SpotResult.PASSED_NO_SIGNAL))
+        assertEquals(GuidanceLevel.FULL, f.level(HardSpotType.MERGE))
+        repeat(6) { f.record(outcome(SpotResult.PASSED)) }
+        f.record(outcome(SpotResult.UNCERTAIN))
         assertEquals(6, f.streak(HardSpotType.MERGE))
         f.record(outcome(SpotResult.MISSED))
         assertEquals(GuidanceLevel.FULL, f.level(HardSpotType.MERGE))

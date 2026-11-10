@@ -32,8 +32,12 @@ class NaviInputs(private val context: Context, private val onEvent: (NaviEvent) 
     private val adapter = TbtAdapter()
     private var navi: NaviHelper? = null
 
+    /**
+     * 도착 예정 시각(경과 시간 기준, 초). DrivingInfo 를 받은 시각에 남은 시간을 더해 고정한다.
+     * TBT 마다 '지금 + 남은 시간'으로 다시 계산하면 DrivingInfo 사이에 ETA 가 계속 밀려 재탐색으로 오판한다.
+     */
     @Volatile
-    private var remainingSec: Int? = null
+    private var etaSec: Long? = null
 
     @Volatile
     var connected = false
@@ -43,12 +47,11 @@ class NaviInputs(private val context: Context, private val onEvent: (NaviEvent) 
         override fun onTBTInfo(tbtInfo: List<TBTInfo>) {
             val next = tbtInfo.firstOrNull() ?: return
             val now = SystemClock.elapsedRealtime()
-            val eta = remainingSec?.let { now / 1000 + it }
-            onEvent(NaviEvent.Tbt(adapter.toUpdate(now, next.type.name, next.distance, next.description, eta)))
+            onEvent(NaviEvent.Tbt(adapter.toUpdate(now, next.type.name, next.distance, next.description, etaSec)))
         }
 
         override fun onDrivingInfo(drivingInfo: DrivingInfo) {
-            remainingSec = drivingInfo.destination.duration
+            etaSec = SystemClock.elapsedRealtime() / 1000 + drivingInfo.destination.duration
         }
 
         override fun onCautionPointInfo(cautionPoints: List<CautionPoint>) {

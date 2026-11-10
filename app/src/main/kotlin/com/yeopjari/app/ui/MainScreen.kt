@@ -190,8 +190,12 @@ private fun TripPanel(state: UiState, controller: CoachController) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("내 기록", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        if (state.summary.isNotEmpty()) Text(state.summary, fontSize = 22.sp)
-        state.outcomes.takeLast(4).forEach {
+        // 진행 중인 주행이 있으면 그것을, 없으면 지난 주행을 보여 준다.
+        val showingLast = state.outcomes.isEmpty() && state.lastTripSummary != null
+        val summary = if (showingLast) "지난 주행: ${state.lastTripSummary}" else state.summary
+        val outcomes = if (showingLast) state.lastTripOutcomes else state.outcomes
+        if (summary.isNotEmpty()) Text(summary, fontSize = 22.sp)
+        outcomes.takeLast(4).forEach {
             Text("· ${Phrases.typeName(it.type)}: ${resultText(it.result, it.signalConfirmed)}", fontSize = 20.sp)
         }
         Text("연습 단계 ${state.ladderStage} · ${state.ladderLabel}", fontSize = 22.sp, color = Accent)

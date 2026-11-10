@@ -20,6 +20,7 @@ class HarshBrakeDetector(
 
     /** 이번 샘플에서 급제동이 새로 감지되면 true. */
     fun onSample(sample: VehicleSample): Boolean {
+        val speed = sample.speedKmh ?: return false // 차속을 모르면 판정하지 않는다.
         val candidates = recent.filter { sample.timeMs - it.timeMs in 1..lookbackMs }
         recent.addLast(sample)
         while (recent.isNotEmpty() && sample.timeMs - recent.first().timeMs > lookbackMs) {
@@ -31,9 +32,10 @@ class HarshBrakeDetector(
         if (last != null && sample.timeMs - last < debounceMs) return false
 
         val detected = candidates.any { before ->
-            val drop = before.speedKmh - sample.speedKmh
+            val beforeSpeed = before.speedKmh ?: return@any false
+            val drop = beforeSpeed - speed
             val seconds = (sample.timeMs - before.timeMs) / 1000.0
-            before.speedKmh >= minStartKmh && drop >= dropKmh && drop / seconds >= dropKmh
+            beforeSpeed >= minStartKmh && drop >= dropKmh && drop / seconds >= dropKmh
         }
         if (detected) lastDetectedMs = sample.timeMs
         return detected

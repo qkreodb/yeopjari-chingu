@@ -97,13 +97,36 @@ class VehicleInputs(private val context: Context, private val onChange: (LiveVeh
             }
         }.onFailure { Log.w(tag, "Pleos Vehicle SDK 사용 불가", it) }
 
+        startCarProperties()
+    }
+
+    /** 차속(런타임 권한 CAR_SPEED)과 기어를 구독한다. 권한을 새로 받으면 다시 부른다. */
+    fun restartCarProperties() {
+        stopCarProperties()
+        startCarProperties()
+    }
+
+    private fun startCarProperties() {
         runCatching {
             val c = Car.createCar(context)
             car = c
             val pm = c.getCarManager(Car.PROPERTY_SERVICE) as CarPropertyManager
-            pm.registerCallback(propertyCallback, VehiclePropertyIds.PERF_VEHICLE_SPEED, CarPropertyManager.SENSOR_RATE_NORMAL)
-            pm.registerCallback(propertyCallback, VehiclePropertyIds.GEAR_SELECTION, CarPropertyManager.SENSOR_RATE_ONCHANGE)
-        }.onFailure { Log.w(tag, "AAOS Car API 사용 불가", it) }
+            val speedOk = pm.registerCallback(
+                propertyCallback, VehiclePropertyIds.PERF_VEHICLE_SPEED, CarPropertyManager.SENSOR_RATE_NORMAL,
+            )
+            val gearOk = pm.registerCallback(
+                propertyCallback, VehiclePropertyIds.GEAR_SELECTION, CarPropertyManager.SENSOR_RATE_ONCHANGE,
+            )
+            if (!speedOk || !gearOk) Log.w(tag, "차속/기어 구독 실패(speed=$speedOk, gear=$gearOk)")
+        }.onFailure { Log.w(tag, "AAOS Car API 사용 불가(권한 확인)", it) }
+    }
+
+    private fun stopCarProperties() {
+        runCatching {
+            (car?.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager)?.unregisterCallback(propertyCallback)
+            car?.disconnect()
+        }
+        car = null
     }
 
     fun stop() {
@@ -115,17 +138,19 @@ class VehicleInputs(private val context: Context, private val onChange: (LiveVeh
                 v.release()
             }
         }
-        runCatching {
-            (car?.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager)?.unregisterCallback(propertyCallback)
-            car?.disconnect()
-        }
+        stopCarProperties()
         vehicle = null
-        car = null
     }
 
+    private val lock = Any()
+
+    /** Pleos 리스너 스레드와 Car API 콜백 스레드가 동시에 부르므로 읽고-바꾸고-쓰기를 묶는다. */
     private fun update(change: (LiveVehicle) -> LiveVehicle) {
-        latest = change(latest)
-        onChange(latest)
+        val next = synchronized(lock) {
+            latest = change(latest)
+            latest
+        }
+        onChange(next)
     }
 
     private fun TurnSignalValue.toCore(): TurnSignal = when (this) {

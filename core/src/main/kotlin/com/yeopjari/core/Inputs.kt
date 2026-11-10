@@ -14,8 +14,10 @@ enum class Gear { P, R, N, D }
  */
 data class VehicleSample(
     val timeMs: Long,
-    val speedKmh: Double,
-    val gear: Gear,
+    /** null: 차속을 읽을 수 없음. 이때는 거리 추정과 급제동 판정을 하지 않는다. */
+    val speedKmh: Double?,
+    /** null: 기어를 읽을 수 없음. P단으로 보지 않는다. */
+    val gear: Gear?,
     val signal: TurnSignal? = null,
     val brakePressed: Boolean? = null,
     val steeringDeg: Double? = null,

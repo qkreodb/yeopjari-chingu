@@ -139,6 +139,19 @@ class CoachEngine(
         return advance(event.timeMs)
     }
 
+    /**
+     * 새 경로가 이미 잡힌 뒤에 오는 재탐색 완료 알림(Pleos onReRouteEnded).
+     * 이때의 현재 지점은 새 경로의 지점이므로 놓친 것으로 보지 않는다. 떠난 지점은 [leave] 가 이미 판정했다.
+     * 최근 10초 안에 재탐색 멘트를 이미 냈다면 다시 말하지 않는다.
+     */
+    fun onRerouteCompleted(timeMs: Long): List<Utterance> {
+        val recentlySaid = lastRerouteMessageMs?.let { timeMs - it <= RECENT_REROUTE_MS } == true
+        if (!recentlySaid && pendingReroute == null) {
+            enqueueReroute(timeMs, null)
+        }
+        return advance(timeMs)
+    }
+
     fun onCaution(update: CautionUpdate): List<Utterance> {
         if (update.remainingM <= config.cautionM && announcedCautions.add(update.cautionId)) {
             Phrases.caution(update.kind)?.let {
@@ -308,10 +321,16 @@ class CoachEngine(
         scheduleRerouteMessage(timeMs, baseEtaSec, newEtaSec)
     }
 
+    private var lastRerouteMessageMs: Long? = null
+
+    private fun enqueueReroute(timeMs: Long, addedSec: Long?) {
+        lastRerouteMessageMs = timeMs
+        budget.enqueue(timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(addedSec))
+    }
+
     private fun scheduleRerouteMessage(timeMs: Long, baseEtaSec: Long?, newEtaSec: Long?) {
         if (newEtaSec != null) {
-            val added = baseEtaSec?.let { newEtaSec - it }
-            budget.enqueue(timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(added))
+            enqueueReroute(timeMs, baseEtaSec?.let { newEtaSec - it })
         } else if (pendingReroute == null) {
             pendingReroute = PendingReroute(timeMs, baseEtaSec, currentManeuverId)
         }
@@ -327,8 +346,7 @@ class CoachEngine(
         val newRoute = update.maneuverId != pr.maneuverIdAtReroute || eta != pr.baseEtaSec
         if (!newRoute) return
         pendingReroute = null
-        val added = pr.baseEtaSec?.let { eta - it }
-        budget.enqueue(update.timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(added))
+        enqueueReroute(update.timeMs, pr.baseEtaSec?.let { eta - it })
     }
 
     private fun advance(nowMs: Long): List<Utterance> {
@@ -339,7 +357,7 @@ class CoachEngine(
         pendingReroute?.let {
             if (nowMs - it.createdMs >= config.rerouteMessageWaitMs) {
                 pendingReroute = null
-                budget.enqueue(nowMs, null, UtteranceKind.REROUTE, Phrases.reroute(null))
+                enqueueReroute(nowMs, null)
             }
         }
 
@@ -385,5 +403,9 @@ class CoachEngine(
         Direction.RIGHT -> signal == TurnSignal.RIGHT
         // 방향을 모르는 지점에서는 어떤 깜빡이도 그 지점을 위한 것이라고 볼 수 없다.
         Direction.NONE -> false
+    }
+
+    private companion object {
+        const val RECENT_REROUTE_MS = 10_000L
     }
 }

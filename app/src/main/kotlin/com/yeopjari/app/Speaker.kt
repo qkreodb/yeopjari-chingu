@@ -2,10 +2,12 @@ package com.yeopjari.app
 
 import ai.pleos.playground.tts.constant.ErrorType
 import ai.pleos.playground.tts.constant.Mode
+import ai.pleos.playground.tts.listener.EventListener
 import ai.pleos.playground.tts.listener.OnInitializeListener
 import android.content.Context
 import android.media.AudioAttributes
 import android.os.SystemClock
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
 import ai.pleos.playground.tts.TextToSpeech as PleosTts
@@ -14,6 +16,7 @@ import android.speech.tts.TextToSpeech as AndroidTts
 /**
  * 차가 하는 말. Pleos TTS(온디바이스, 한국어)를 쓰고, 초기화에 실패하면 안드로이드 기본 TTS 로 대신한다.
  * 내비 안내와 같은 용도(USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)로 소리를 내어 시스템이 내비 음성과 조율하게 한다.
+ * TTS 가 준비되기 전에 들어온 문장은 잠시 보관했다가, 준비되면 10초 안의 것만 말한다.
  */
 class Speaker(context: Context) {
     private val tag = "Speaker"
@@ -23,19 +26,28 @@ class Speaker(context: Context) {
         .build()
 
     private var pleos: PleosTts? = null
-    private var pleosReady = false
+    @Volatile private var pleosReady = false
     private var fallback: AndroidTts? = null
-    private var fallbackReady = false
+    @Volatile private var fallbackReady = false
+    private val waiting = ArrayDeque<Pair<Long, String>>()
 
-    /** 우리 앱이 마지막으로 말을 시작한 시각. 내비 음성 감지에서 우리 소리를 빼는 데 쓴다. */
+    /** 지금 우리 앱이 말하는 중인지(TTS 시작~끝). 내비 음성 감지에서 우리 소리를 빼는 데 쓴다. */
     @Volatile
-    var lastSpokeAtMs: Long = 0
+    var speaking: Boolean = false
         private set
 
     init {
         runCatching {
             PleosTts(context.applicationContext, Mode.ON_DEVICE).also { tts ->
                 pleos = tts
+                tts.addEventListener(object : EventListener {
+                    override fun onStart() { speaking = true }
+                    override fun onReady() = Unit
+                    override fun onDone() { speaking = false }
+                    override fun onStop() { speaking = false }
+                    override fun onError(errorType: ErrorType) { speaking = false }
+                    override fun onUpdatedRms(rms: Double) = Unit
+                })
                 tts.initialize(object : OnInitializeListener {
                     override fun onSuccess() {
                         runCatching {
@@ -43,6 +55,7 @@ class Speaker(context: Context) {
                             tts.setAudioAttributes(attributes)
                         }
                         pleosReady = true
+                        flushWaiting()
                     }
 
                     override fun onFailure(errorType: ErrorType) {
@@ -56,7 +69,14 @@ class Speaker(context: Context) {
             if (status == AndroidTts.SUCCESS) {
                 fallback?.language = Locale.KOREA
                 fallback?.setAudioAttributes(attributes)
+                fallback?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) { speaking = true }
+                    override fun onDone(utteranceId: String?) { speaking = false }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) { speaking = false }
+                })
                 fallbackReady = true
+                flushWaiting()
             }
         }
     }
@@ -69,16 +89,35 @@ class Speaker(context: Context) {
         }
 
     fun speak(text: String) {
-        lastSpokeAtMs = SystemClock.elapsedRealtime()
-        val p = pleos
-        if (pleosReady && p != null) {
-            runCatching { p.speak(text, false) }.onSuccess { return }
+        if (!say(text)) {
+            synchronized(waiting) { waiting.addLast(SystemClock.elapsedRealtime() to text) }
         }
-        if (fallbackReady) fallback?.speak(text, AndroidTts.QUEUE_ADD, null, text.hashCode().toString())
+    }
+
+    private fun say(text: String): Boolean {
+        val p = pleos
+        if (pleosReady && p != null && runCatching { p.speak(text, false) }.isSuccess) return true
+        val f = fallback
+        if (fallbackReady && f != null) {
+            return f.speak(text, AndroidTts.QUEUE_ADD, null, text.hashCode().toString()) == AndroidTts.SUCCESS
+        }
+        return false
+    }
+
+    private fun flushWaiting() {
+        val now = SystemClock.elapsedRealtime()
+        val fresh = synchronized(waiting) {
+            waiting.filter { now - it.first <= MAX_WAIT_MS }.also { waiting.clear() }
+        }
+        fresh.forEach { say(it.second) }
     }
 
     fun release() {
         runCatching { pleos?.release() }
         fallback?.shutdown()
+    }
+
+    private companion object {
+        const val MAX_WAIT_MS = 10_000L
     }
 }

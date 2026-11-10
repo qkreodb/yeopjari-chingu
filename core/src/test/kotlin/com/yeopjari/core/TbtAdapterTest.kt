@@ -28,15 +28,16 @@ class TbtAdapterTest {
     }
 
     @Test
-    fun `같은 지점은 같은 ID, 지나간 뒤 같은 종류가 다시 오면 새 ID`() {
+    fun `같은 지점은 같은 ID, 거리가 크게 다시 늘면 새 ID`() {
         val a = TbtAdapter()
         val first = a.toUpdate(0, "TURN_DEVIDE_MERGE", 900.0, null, null)
         val same = a.toUpdate(1_000, "TURN_DEVIDE_MERGE", 880.0, null, null)
         assertEquals(first.maneuverId, same.maneuverId)
-        // 지나쳐서 거리가 늘어난 경우(재탐색 판단은 엔진 몫)는 같은 ID
-        val overshoot = a.toUpdate(2_000, "TURN_DEVIDE_MERGE", 1_400.0, null, null)
-        assertEquals(first.maneuverId, overshoot.maneuverId)
-        a.toUpdate(3_000, "TURN_DEVIDE_MERGE", 40.0, null, null)
+        // GPS 흔들림 정도의 증가는 같은 지점
+        val drift = a.toUpdate(1_500, "TURN_DEVIDE_MERGE", 1_000.0, null, null)
+        assertEquals(first.maneuverId, drift.maneuverId)
+        // 갱신이 드물어 마지막 거리가 130m였어도, 다음 같은 종류 지점은 새 ID
+        a.toUpdate(3_000, "TURN_DEVIDE_MERGE", 130.0, null, null)
         val nextMerge = a.toUpdate(4_000, "TURN_DEVIDE_MERGE", 2_000.0, null, null)
         assertNotEquals(first.maneuverId, nextMerge.maneuverId)
         val turn = a.toUpdate(5_000, "TURN_RIGHT", 300.0, null, null)

@@ -5,12 +5,11 @@ package com.yeopjari.core
  * Pleos 타입에 의존하지 않도록 TurnType 은 이름 문자열로 받는다(예: "TURN_ENTER_IC_R").
  *
  * Pleos TBT 에는 지점 ID가 없으므로 여기서 만든다.
- * - 안내 종류가 바뀌면 새 지점
- * - 같은 종류라도 직전 거리가 [passedM] 이하였다가 크게 늘면(지점을 지나 다음 같은 종류 지점) 새 지점
- * - 그 밖에 같은 종류의 거리가 늘어난 것은 같은 지점으로 두어, 엔진이 재탐색(지나침)을 판단하게 한다
+ * - 안내 종류가 바뀌거나 거리가 [newSpotJumpM] 이상 다시 늘면 새 지점
+ *   (TBT 갱신 간격과 무관하게, 지나간 지점 다음의 같은 종류 지점을 새 지점으로 본다)
+ * - 지점을 놓친 것인지는 엔진이 판단한다: 도달 거리 추정, ETA 증가, Pleos 재탐색 이벤트(onReRouteEnded)
  */
 class TbtAdapter(
-    private val passedM: Double = 100.0,
     private val newSpotJumpM: Double = 300.0,
 ) {
     data class Mapped(val kind: ManeuverKind, val direction: Direction, val roundaboutClock: Int? = null)
@@ -22,7 +21,7 @@ class TbtAdapter(
     fun toUpdate(timeMs: Long, turnType: String, distanceM: Double, description: String?, etaEpochSec: Long?): TbtUpdate {
         val previousDistance = lastDistanceM
         val isNew = lastType != turnType ||
-            (previousDistance != null && previousDistance <= passedM && distanceM > previousDistance + newSpotJumpM)
+            (previousDistance != null && distanceM > previousDistance + newSpotJumpM)
         if (isNew) seq++
         lastType = turnType
         lastDistanceM = distanceM

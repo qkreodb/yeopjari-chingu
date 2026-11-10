@@ -91,6 +91,7 @@ class ScenarioTest {
     fun `주행 요약은 지나온 지점만 사실대로 센다`() {
         assertEquals("오늘 합류 구간 1번 지나왔어요.", Replayer.replay(Scenarios.mergeSignalEarly).summary)
         assertEquals("오늘 합류 구간 1번 지나왔어요.", Replayer.replay(Scenarios.mergeNoSignal).summary)
-        assertEquals("오늘은 미리 안내한 어려운 구간 없이 다녀왔어요.", Replayer.replay(Scenarios.icMissed).summary)
+        assertEquals("오늘은 어려운 구간 1곳의 기록을 남겼어요.", Replayer.replay(Scenarios.icMissed).summary)
+        assertEquals("오늘은 미리 안내한 어려운 구간 없이 다녀왔어요.", Replayer.replay(Scenarios.congestionBraking).summary)
     }
 }

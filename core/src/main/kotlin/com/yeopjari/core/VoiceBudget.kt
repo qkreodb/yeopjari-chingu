@@ -32,15 +32,15 @@ class VoiceBudget(private val config: BudgetConfig = BudgetConfig()) {
     private data class Pending(val createdMs: Long, val spotId: String?, val kind: UtteranceKind, val text: String)
 
     private val queue = ArrayDeque<Pending>()
-    private val countPerSpot = mutableMapOf<String, Int>()
+    /** 실제로 말한 횟수. 만료돼 버려진 문장은 예산을 쓰지 않는다. */
+    private val spokenPerSpot = mutableMapOf<String, Int>()
     private var lastSpokenMs: Long? = null
 
-    /** 넣었으면 true. 지점 예산을 넘으면 넣지 않는다. */
+    /** 넣었으면 true. 이미 말한 것과 대기 중인 것을 합쳐 지점 예산을 넘으면 넣지 않는다. */
     fun enqueue(timeMs: Long, spotId: String?, kind: UtteranceKind, text: String): Boolean {
         if (spotId != null) {
-            val used = countPerSpot[spotId] ?: 0
+            val used = (spokenPerSpot[spotId] ?: 0) + queue.count { it.spotId == spotId }
             if (used >= config.maxPerSpot) return false
-            countPerSpot[spotId] = used + 1
         }
         queue.addLast(Pending(timeMs, spotId, kind, text))
         return true
@@ -53,6 +53,7 @@ class VoiceBudget(private val config: BudgetConfig = BudgetConfig()) {
         if (queue.isEmpty() || !canSpeak(nowMs, gate)) return emptyList()
         val next = queue.removeFirst()
         lastSpokenMs = nowMs
+        next.spotId?.let { spokenPerSpot[it] = (spokenPerSpot[it] ?: 0) + 1 }
         return listOf(Utterance(nowMs, next.kind, next.text))
     }
 

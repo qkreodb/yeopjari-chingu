@@ -21,16 +21,21 @@ class TripLog {
     fun confirmedPassTotals(): Map<HardSpotType, Int> =
         HardSpotType.entries.associateWith { count(it, SpotResult.PASSED) }
 
-    /** 주차 후 한 문장 요약. 사실만 말한다. */
+    /**
+     * 주차 후 요약. 사실만 말한다. 지났는지 확인하지 못한 지점(놓침·판정 보류)은
+     * 지나왔다고 하지 않고 "기록만 남겼어요"로 센다.
+     */
     fun summary(): String {
         val parts = HardSpotType.entries.mapNotNull { type ->
             val n = passedCount(type)
             if (n > 0) "${Phrases.typeName(type)} ${n}번" else null
         }
-        return if (parts.isEmpty()) {
-            "오늘은 미리 안내한 어려운 구간 없이 다녀왔어요."
-        } else {
-            "오늘 ${parts.joinToString(", ")} 지나왔어요."
+        val others = items.count { it.result == SpotResult.MISSED || it.result == SpotResult.UNCERTAIN }
+        return when {
+            parts.isEmpty() && others == 0 -> "오늘은 미리 안내한 어려운 구간 없이 다녀왔어요."
+            parts.isEmpty() -> "오늘은 어려운 구간 ${others}곳의 기록을 남겼어요."
+            others == 0 -> "오늘 ${parts.joinToString(", ")} 지나왔어요."
+            else -> "오늘 ${parts.joinToString(", ")} 지나왔어요. 다른 ${others}곳은 기록만 남겼어요."
         }
     }
 }

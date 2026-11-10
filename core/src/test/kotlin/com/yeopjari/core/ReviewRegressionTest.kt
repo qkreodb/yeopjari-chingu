@@ -144,6 +144,143 @@ class ReviewRegressionTest {
         assertEquals(SpotResult.PASSED, Replayer.replay(s).outcomes.single().result)
     }
 
+    // ---- 2차 리뷰 ----
+
+    @Test
+    fun `TBT 갱신 사이에 지점 바로 앞에서 켠 깜빡이를 먼 거리로 기록하지 않는다`() {
+        val e = CoachEngine()
+        // 100km/h(초당 약 27.8m), TBT는 900m에서 한 번, 이후 3초 동안 갱신 없음
+        e.onVehicle(VehicleSample(0, 100.0, Gear.D, TurnSignal.OFF, false, 0.0))
+        e.onTbt(TbtUpdate(0, "m", ManeuverKind.MERGE, Direction.RIGHT, 900, 1_000))
+        e.onVehicle(VehicleSample(500, 100.0, Gear.D, TurnSignal.OFF, false, 0.0))
+        // 30초쯤 지나 지점 60m 앞: 마지막 TBT가 오래돼 추정하지 않으므로 인정하지 않는다.
+        e.onVehicle(VehicleSample(30_500, 100.0, Gear.D, TurnSignal.RIGHT, false, 0.0))
+        e.onTbt(TbtUpdate(31_000, "n", ManeuverKind.TURN, Direction.LEFT, 2_000, 1_000))
+        for (k in 1..60) e.tick(31_000 + k * 250L)
+        assertFalse(e.log.outcomes.any { it.result == SpotResult.PASSED && it.signalConfirmed })
+    }
+
+    @Test
+    fun `인정 구간에 들어오기 전부터 켜져 있던 깜빡이는 인정하지 않는다`() {
+        val s = scenario("left_on", "3km 전부터 켜 둔 깜빡이") {
+            signal = TurnSignal.RIGHT
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 3_000)
+            next("t2", ManeuverKind.TURN, Direction.LEFT, remainingM = 2_000)
+            signal = TurnSignal.OFF
+            drive(15_000)
+        }
+        val r = Replayer.replay(s)
+        assertEquals(SpotResult.PASSED_NO_SIGNAL, r.outcomes.single().result)
+        // 켜져 있는 동안 "꺼져 있어요"라고 말하지도 않는다.
+        assertFalse(r.utterances.any { "꺼져 있어요" in it.text })
+    }
+
+    @Test
+    fun `방향을 모르는 합류에서는 어떤 깜빡이도 칭찬 근거가 되지 않는다`() {
+        val s = scenario("merge_dir_unknown", "방향 정보가 없는 합류") {
+            approach("m1", ManeuverKind.MERGE, Direction.NONE, fromM = 1_200) { r ->
+                if (r <= 600) signal = TurnSignal.LEFT
+            }
+            next("t2", ManeuverKind.TURN, Direction.LEFT, remainingM = 2_000)
+            signal = TurnSignal.OFF
+            drive(15_000)
+        }
+        val r = Replayer.replay(s)
+        assertFalse(r.utterances.any { "미리 켰어요" in it.text || "꺼져 있어요" in it.text }, "${r.utterances}")
+        assertFalse(r.outcomes.single().signalConfirmed)
+    }
+
+    @Test
+    fun `합류 직전 급제동도 판정을 보류한다`() {
+        val s = scenario("brake_before_pass", "합류 지점 2초 전 급제동") {
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 1_200, toM = 60) { r ->
+                if (r <= 600) signal = TurnSignal.RIGHT
+            }
+            brakeTo(35.0)
+            speedKmh = 35.0
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 50)
+            next("t2", ManeuverKind.TURN, Direction.LEFT, remainingM = 2_000)
+            signal = TurnSignal.OFF
+            drive(40_000)
+        }
+        val r = Replayer.replay(s)
+        assertEquals(SpotResult.UNCERTAIN, r.outcomes.single().result)
+        assertFalse(r.utterances.any { it.kind == UtteranceKind.AFTER_PASS })
+    }
+
+    @Test
+    fun `휴게소에서 잠깐 P단에 둬도 앞의 지점을 지우지 않는다`() {
+        val s = scenario("rest_stop", "지점 5km 전 휴게소 정차 후 출발") {
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 6_000, toM = 5_000)
+            val moving = speedKmh
+            speedKmh = 0.0
+            gear = Gear.P
+            drive(60_000)
+            gear = Gear.D
+            speedKmh = moving
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 5_000) { r ->
+                if (r <= 600) signal = TurnSignal.RIGHT
+            }
+            next("t2", ManeuverKind.TURN, Direction.LEFT, remainingM = 2_000)
+            signal = TurnSignal.OFF
+            drive(15_000)
+        }
+        val r = Replayer.replay(s)
+        assertEquals(listOf(SpotResult.PASSED), r.outcomes.map { it.result })
+    }
+
+    @Test
+    fun `재탐색 직후 옛 ETA가 담긴 갱신으로 시간을 계산하지 않는다`() {
+        val e = CoachEngine()
+        e.onVehicle(VehicleSample(0, 60.0, Gear.D, TurnSignal.OFF, false, 0.0))
+        e.onTbt(TbtUpdate(0, "t1", ManeuverKind.TURN, Direction.LEFT, 800, 1_000))
+        val said = mutableListOf<Utterance>()
+        said += e.onReroute(RerouteEvent(500))
+        // 같은 안내, 옛 ETA → 아직 새 경로 아님
+        said += e.onTbt(TbtUpdate(1_000, "t1", ManeuverKind.TURN, Direction.LEFT, 790, 1_000))
+        // 새 경로: ETA 4분 증가
+        said += e.onTbt(TbtUpdate(2_000, "t9", ManeuverKind.TURN, Direction.RIGHT, 1_500, 1_240))
+        for (k in 1..20) said += e.tick(2_000 + k * 250L)
+        assertEquals(listOf("괜찮아요, 4분만 더 걸려요."), said.map { it.text })
+    }
+
+    @Test
+    fun `GPS 흔들림으로 남은 거리가 조금 늘어도 놓침으로 보지 않는다`() {
+        val s = scenario("gps_drift", "터널 뒤 남은 거리 150m 증가") {
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 1_500, toM = 800)
+            approach("m1", ManeuverKind.MERGE, Direction.RIGHT, fromM = 950) { r ->
+                if (r <= 600) signal = TurnSignal.RIGHT
+            }
+            next("t2", ManeuverKind.TURN, Direction.LEFT, remainingM = 2_000)
+            signal = TurnSignal.OFF
+            drive(15_000)
+        }
+        val r = Replayer.replay(s)
+        assertEquals(listOf(SpotResult.PASSED), r.outcomes.map { it.result })
+        assertEquals(1, r.utterances.count { it.kind == UtteranceKind.PRE_1KM })
+    }
+
+    @Test
+    fun `말하지 못하고 만료된 문장은 지점 예산을 쓰지 않는다`() {
+        val b = VoiceBudget()
+        val blocked = SpeakGate(steeringDeg = 45.0, lastHarshBrakeMs = null, navVoiceSpeaking = false)
+        val open = blocked.copy(steeringDeg = 0.0)
+        b.enqueue(0, "s", UtteranceKind.PRE_1KM, "a")
+        b.enqueue(0, "s", UtteranceKind.PRE_400M, "b")
+        assertTrue(b.flush(5_000, blocked).isEmpty())
+        assertTrue(b.flush(11_000, blocked).isEmpty()) // 둘 다 만료
+        assertTrue(b.enqueue(11_000, "s", UtteranceKind.AFTER_PASS, "c"))
+        assertEquals(listOf("c"), b.flush(11_000, open).map { it.text })
+    }
+
+    @Test
+    fun `통과 직후 급제동으로 보류된 지점도 요약에 기록으로 남는다`() {
+        assertEquals(
+            "오늘은 어려운 구간 1곳의 기록을 남겼어요.",
+            Replayer.replay(com.yeopjari.core.sim.Scenarios.mergeThenHarshBrake).summary,
+        )
+    }
+
     @Test
     fun `연습 사다리는 깜빡이까지 확인된 통과만 센다`() {
         val log = TripLog()

@@ -6,18 +6,23 @@ data class CoachConfig(
     /** 이 거리 안으로 들어오면 지점에 "도달"한 것으로 본다. */
     val nearM: Int = 50,
     /**
-     * 깜빡이를 "지점 전에 켰다"고 인정하는 구간. 지점에서 이 거리 안이면서 도달 전이어야 한다.
-     * 훨씬 앞에서 다른 이유(차로 변경)로 켠 깜빡이를 인정하지 않기 위해서다.
+     * 깜빡이를 "지점 전에 켰다"고 인정하는 구간. 이 구간 안에서, 도달 전에, 꺼진 상태에서 켜는 것을 봐야 인정한다.
+     * 훨씬 앞에서 다른 이유(차로 변경)로 켜 둔 깜빡이를 인정하지 않기 위해서다.
      */
     val signalCreditM: Int = 1_000,
-    /** 통과 후 급제동을 지켜보는 시간. 이 시간이 지나야 판정을 확정한다. */
+    /** 통과 전후로 급제동을 지켜보는 시간. 통과 후에는 이 시간이 지나야 판정을 확정한다. */
     val brakeWindowAfterPassMs: Long = 10_000,
+    val brakeWindowBeforePassMs: Long = 10_000,
     /** 같은 지점의 남은 거리가 이만큼 다시 늘어나면 재탐색으로 본다. */
-    val rerouteJumpM: Int = 100,
+    val rerouteJumpM: Int = 300,
+    /** 남은 거리가 이만큼 늘고 ETA도 [rerouteEtaIncreaseSec] 이상 늘면 재탐색으로 본다. */
+    val rerouteJumpWithEtaM: Int = 100,
     /** 지점에 도달하지 않은 채 다음 안내로 넘어갈 때, ETA가 이만큼 늘었으면 놓친 것으로 본다. */
     val rerouteEtaIncreaseSec: Long = 30,
     /** TBT 갱신이 드문 내비에서, 마지막 갱신 뒤 달린 거리를 감안할 때 더하는 여유. */
     val reachSlackM: Int = 30,
+    /** 마지막 TBT 뒤 이 시간보다 오래 지나면 거리를 추정하지 않는다(터널, 내비 멈춤). */
+    val maxExtrapolationMs: Long = 10_000,
     /** 재탐색 후 새 ETA를 기다리는 최대 시간. 지나면 시간 없이 말한다. */
     val rerouteMessageWaitMs: Long = 8_000,
     /** 주의 지점을 말하는 거리. */
@@ -67,15 +72,20 @@ class CoachEngine(
         var lastUpdateMs: Long,
         var said1km: Boolean = false,
         var said400m: Boolean = false,
-        var reachedNear: Boolean = false,
+        var reachedAtMs: Long? = null,
+        /** 인정 구간 안에서 같은 방향이 아닌(꺼진) 깜빡이를 봤는지. 켜는 순간을 확인하는 데 쓴다. */
+        var sawSignalOffInZone: Boolean = false,
         var signalDistanceM: Int? = null,
-    )
+    ) {
+        val reachedNear: Boolean get() = reachedAtMs != null
+    }
 
-    private class PendingPass(val spot: ActiveSpot, val passMs: Long, var harshBrake: Boolean = false)
+    private class PendingPass(val spot: ActiveSpot, val passMs: Long, var harshBrake: Boolean)
 
-    private class PendingReroute(val createdMs: Long, val baseEtaSec: Long?)
+    private class PendingReroute(val createdMs: Long, val baseEtaSec: Long?, val maneuverIdAtReroute: String?)
 
     fun onVehicle(sample: VehicleSample): List<Utterance> {
+        lastSample = sample
         if (brakeDetector.onSample(sample)) {
             lastHarshBrakeMs = sample.timeMs
             pendingPasses.forEach {
@@ -83,61 +93,27 @@ class CoachEngine(
             }
         }
         if (sample.signal != null) signalReadable = true
-        current?.let { spot ->
-            val inCreditZone = !spot.reachedNear && spot.lastRemainingM in (config.nearM + 1)..config.signalCreditM
-            if (spot.signalDistanceM == null && inCreditZone && matches(sample.signal, spot.direction)) {
-                spot.signalDistanceM = spot.lastRemainingM
-            }
-        }
-        lastSample = sample
-        if (sample.gear == Gear.P) endOfGuidance(sample.timeMs)
+        current?.let { trackSignal(it, sample) }
+        if (sample.gear == Gear.P) parked(sample.timeMs)
         return advance(sample.timeMs)
     }
 
     fun onTbt(update: TbtUpdate): List<Utterance> {
         val etaBefore = lastEtaSec
         update.etaEpochSec?.let { lastEtaSec = it }
-
-        pendingReroute?.let { pr ->
-            val eta = update.etaEpochSec
-            if (eta != null) {
-                pendingReroute = null
-                val added = pr.baseEtaSec?.let { eta - it }
-                budget.enqueue(update.timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(added))
-            }
-        }
+        resolvePendingReroute(update)
 
         if (update.maneuverId != currentManeuverId) {
             current?.let { leave(it, update, etaBefore) }
             currentManeuverId = update.maneuverId
-            current = HardSpotType.of(update.kind)?.let {
-                ActiveSpot(
-                    key = "${update.maneuverId}#${spotSeq++}",
-                    id = update.maneuverId,
-                    type = it,
-                    direction = update.direction,
-                    roundaboutExit = update.roundaboutExit,
-                    lastRemainingM = update.remainingM,
-                    lastUpdateMs = update.timeMs,
-                )
-            }
+            current = HardSpotType.of(update.kind)?.let { newSpot(update, it) }
         } else {
             val spot = current
-            if (spot != null && !spot.reachedNear &&
-                update.remainingM > spot.lastRemainingM + config.rerouteJumpM
-            ) {
-                // 같은 지점인데 남은 거리가 다시 늘었다: 지나쳐서 돌아오는 경로가 잡힌 것.
+            if (spot != null && !spot.reachedNear && isRerouteJump(spot, update, etaBefore)) {
+                // 같은 지점인데 남은 거리가 크게 다시 늘었다: 지나쳐서 돌아오는 경로가 잡힌 것.
                 missed(spot, update.timeMs, etaBefore, update.etaEpochSec)
                 // 돌아오는 경로의 같은 지점은 새 지점으로 처음부터 안내한다.
-                current = ActiveSpot(
-                    key = "${update.maneuverId}#${spotSeq++}",
-                    id = spot.id,
-                    type = spot.type,
-                    direction = spot.direction,
-                    roundaboutExit = spot.roundaboutExit,
-                    lastRemainingM = update.remainingM,
-                    lastUpdateMs = update.timeMs,
-                )
+                current = newSpot(update, spot.type)
             }
         }
 
@@ -181,25 +157,69 @@ class CoachEngine(
     fun tick(timeMs: Long): List<Utterance> = advance(timeMs)
 
     /**
-     * 안내가 끝났을 때(목적지 도착, P단). 마지막 지점 뒤에 다음 안내가 없으면 [leave] 가 불리지 않으므로
-     * 여기서 정리하고, 보류 중인 판정은 급제동 창을 기다리지 않고 확정한다.
+     * 내비 안내가 끝났을 때(목적지 도착). 마지막 지점 뒤에는 다음 안내가 없어 [leave] 가 불리지 않으므로 여기서 정리한다.
      */
-    fun endOfGuidance(timeMs: Long) {
+    fun onGuidanceEnded(timeMs: Long): List<Utterance> {
         current?.let { spot ->
-            if (reached(spot, timeMs)) pendingPasses += PendingPass(spot, timeMs)
+            if (reached(spot, timeMs)) addPendingPass(spot, timeMs)
             else record(spot, timeMs, SpotResult.UNCERTAIN)
         }
         current = null
         currentManeuverId = null
+        return advance(timeMs)
+    }
+
+    /**
+     * 주행을 마칠 때(앱 종료, 시동 끔). 보류 중인 판정을 지금 확정한다.
+     * 차가 서 있으므로 통과 후 급제동 창을 끝까지 기다리지 않아도 된다.
+     */
+    fun finishTrip(timeMs: Long) {
+        onGuidanceEnded(timeMs)
         pendingPasses.forEach { finalizePass(it, timeMs) }
         pendingPasses.clear()
+    }
+
+    private fun newSpot(update: TbtUpdate, type: HardSpotType) = ActiveSpot(
+        key = "${update.maneuverId}#${spotSeq++}",
+        id = update.maneuverId,
+        type = type,
+        direction = update.direction,
+        roundaboutExit = update.roundaboutExit,
+        lastRemainingM = update.remainingM,
+        lastUpdateMs = update.timeMs,
+    )
+
+    /**
+     * P단: 지점에 도달한 뒤라면 통과로 넘기고, 아니면 그대로 둔다.
+     * 휴게소나 긴 신호에서 잠깐 P에 둔 것을 주행 종료로 보지 않기 위해서다.
+     */
+    private fun parked(timeMs: Long) {
+        val spot = current ?: return
+        if (reached(spot, timeMs)) {
+            addPendingPass(spot, timeMs)
+            current = null
+        }
+    }
+
+    private fun trackSignal(spot: ActiveSpot, sample: VehicleSample) {
+        if (spot.reachedNear || spot.signalDistanceM != null) return
+        val distance = estimatedRemaining(spot, sample.timeMs) ?: return
+        if (distance <= config.nearM || distance > config.signalCreditM) return
+        val on = matches(sample.signal, spot.direction)
+        if (!on) {
+            spot.sawSignalOffInZone = true
+        } else if (spot.sawSignalOffInZone) {
+            // 인정 구간 안에서 꺼진 상태를 본 뒤 켜는 것을 확인했다.
+            spot.signalDistanceM = distance
+        }
     }
 
     private fun approach(spot: ActiveSpot, update: TbtUpdate) {
         spot.lastRemainingM = update.remainingM
         spot.lastUpdateMs = update.timeMs
         val remaining = update.remainingM
-        if (remaining <= config.nearM) spot.reachedNear = true
+        if (remaining <= config.nearM && spot.reachedAtMs == null) spot.reachedAtMs = update.timeMs
+        lastSample?.let { trackSignal(spot, it.copy(timeMs = update.timeMs)) }
         val level = fading.level(spot.type)
 
         // 1km 구간을 건너뛰고 400m 안으로 바로 들어온 경우 1km 안내는 하지 않는다(400m 안내가 대신한다).
@@ -219,15 +239,18 @@ class CoachEngine(
         }
     }
 
+    private fun signalCheckable(spot: ActiveSpot): Boolean =
+        spot.type.requiresSignal && signalReadable && spot.direction != Direction.NONE
+
     private fun pre400m(spot: ActiveSpot, timeMs: Long) {
         val text = if (spot.type.requiresSignal) {
             when {
                 // 이미 켰으면 다시 말하지 않는다.
                 spot.signalDistanceM != null -> return
-                // 지금도 같은 방향으로 켜져 있으면(인정 구간 직전에 켠 경우) 말하지 않는다.
-                matches(lastSample?.signal, spot.direction) -> return
-                // 깜빡이를 읽을 수 없으면 "꺼져 있다"는 말을 하지 않는다.
-                !signalReadable -> Phrases.pre400mWithoutSignal(spot.type, spot.direction)
+                // 지금 같은 방향으로 켜져 있으면 말하지 않는다.
+                spot.direction != Direction.NONE && matches(lastSample?.signal, spot.direction) -> return
+                // 깜빡이를 읽을 수 없거나 방향을 모르면 "꺼져 있다"는 말을 하지 않는다.
+                !signalCheckable(spot) -> Phrases.pre400mWithoutSignal(spot.type, spot.direction)
                 else -> Phrases.pre400m(spot.type, spot.direction)
             }
         } else {
@@ -236,20 +259,34 @@ class CoachEngine(
         budget.enqueue(timeMs, spot.key, UtteranceKind.PRE_400M, text)
     }
 
-    /**
-     * 지점에 도달했는지. TBT 갱신이 드문 내비를 위해, 마지막 갱신 뒤 현재 속도로 달린 거리를 감안한다.
-     */
+    /** 마지막 TBT 뒤 달린 거리를 뺀 현재 남은 거리 추정. 너무 오래돼 추정할 수 없으면 null. */
+    private fun estimatedRemaining(spot: ActiveSpot, nowMs: Long): Int? {
+        val elapsed = nowMs - spot.lastUpdateMs
+        if (elapsed <= 0) return spot.lastRemainingM
+        if (elapsed > config.maxExtrapolationMs) return null
+        val speed = lastSample?.speedKmh ?: return null
+        return (spot.lastRemainingM - speed / 3.6 * elapsed / 1000.0).toInt()
+    }
+
+    /** 지점에 도달했는지. TBT 갱신이 드문 내비를 위해 마지막 갱신 뒤 달린 거리를 감안한다(최대 10초). */
     private fun reached(spot: ActiveSpot, nowMs: Long): Boolean {
         if (spot.reachedNear) return true
-        val speed = lastSample?.speedKmh ?: return false
-        val travelledM = speed / 3.6 * (nowMs - spot.lastUpdateMs) / 1000.0
-        return spot.lastRemainingM - travelledM <= config.nearM + config.reachSlackM
+        val estimate = estimatedRemaining(spot, nowMs) ?: return false
+        return estimate <= config.nearM + config.reachSlackM
+    }
+
+    private fun isRerouteJump(spot: ActiveSpot, update: TbtUpdate, etaBeforeSec: Long?): Boolean {
+        val jump = update.remainingM - spot.lastRemainingM
+        if (jump >= config.rerouteJumpM) return true
+        val eta = update.etaEpochSec
+        val etaUp = eta != null && etaBeforeSec != null && eta - etaBeforeSec >= config.rerouteEtaIncreaseSec
+        return jump >= config.rerouteJumpWithEtaM && etaUp
     }
 
     /** 다음 안내로 넘어가면서 이전 지점을 떠날 때. */
     private fun leave(spot: ActiveSpot, update: TbtUpdate, etaBeforeSec: Long?) {
         if (reached(spot, update.timeMs)) {
-            pendingPasses += PendingPass(spot, update.timeMs)
+            addPendingPass(spot, spot.reachedAtMs ?: update.timeMs)
             return
         }
         // 지점에 닿지 않은 채 다음 안내로 넘어갔다. ETA까지 늘었으면 놓친 것으로, 아니면 판단을 보류한다.
@@ -258,6 +295,12 @@ class CoachEngine(
             newEta - etaBeforeSec >= config.rerouteEtaIncreaseSec
         if (etaJump) missed(spot, update.timeMs, etaBeforeSec, newEta)
         else record(spot, update.timeMs, SpotResult.UNCERTAIN)
+    }
+
+    private fun addPendingPass(spot: ActiveSpot, passMs: Long) {
+        // 통과 직전의 급제동도 판정에 넣는다(합류하며 급히 선 경우).
+        val brakeBefore = lastHarshBrakeMs?.let { passMs - it <= config.brakeWindowBeforePassMs } == true
+        pendingPasses += PendingPass(spot, passMs, harshBrake = brakeBefore)
     }
 
     private fun missed(spot: ActiveSpot, timeMs: Long, baseEtaSec: Long?, newEtaSec: Long?) {
@@ -270,8 +313,22 @@ class CoachEngine(
             val added = baseEtaSec?.let { newEtaSec - it }
             budget.enqueue(timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(added))
         } else if (pendingReroute == null) {
-            pendingReroute = PendingReroute(timeMs, baseEtaSec)
+            pendingReroute = PendingReroute(timeMs, baseEtaSec, currentManeuverId)
         }
+    }
+
+    /**
+     * 재탐색 뒤 새 경로의 ETA를 기다린다. 재탐색 직후의 갱신은 아직 옛 ETA일 수 있으므로,
+     * 안내 지점이 바뀌었거나 ETA가 달라진 갱신만 새 경로로 인정한다.
+     */
+    private fun resolvePendingReroute(update: TbtUpdate) {
+        val pr = pendingReroute ?: return
+        val eta = update.etaEpochSec ?: return
+        val newRoute = update.maneuverId != pr.maneuverIdAtReroute || eta != pr.baseEtaSec
+        if (!newRoute) return
+        pendingReroute = null
+        val added = pr.baseEtaSec?.let { eta - it }
+        budget.enqueue(update.timeMs, null, UtteranceKind.REROUTE, Phrases.reroute(added))
     }
 
     private fun advance(nowMs: Long): List<Utterance> {
@@ -293,10 +350,9 @@ class CoachEngine(
     private fun finalizePass(pass: PendingPass, nowMs: Long) {
         val spot = pass.spot
         val levelBefore = fading.level(spot.type)
-        val signalRequired = spot.type.requiresSignal && signalReadable
         val result = when {
             pass.harshBrake -> SpotResult.UNCERTAIN
-            signalRequired && spot.signalDistanceM == null -> SpotResult.PASSED_NO_SIGNAL
+            signalCheckable(spot) && spot.signalDistanceM == null -> SpotResult.PASSED_NO_SIGNAL
             else -> SpotResult.PASSED
         }
         val outcome = record(spot, pass.passMs, result)
@@ -327,6 +383,7 @@ class CoachEngine(
     private fun matches(signal: TurnSignal?, direction: Direction): Boolean = when (direction) {
         Direction.LEFT -> signal == TurnSignal.LEFT
         Direction.RIGHT -> signal == TurnSignal.RIGHT
-        Direction.NONE -> signal == TurnSignal.LEFT || signal == TurnSignal.RIGHT
+        // 방향을 모르는 지점에서는 어떤 깜빡이도 그 지점을 위한 것이라고 볼 수 없다.
+        Direction.NONE -> false
     }
 }

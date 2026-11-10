@@ -81,6 +81,7 @@ class ScenarioBuilder(
         roundaboutExit: Int? = null,
         onDistance: ScenarioBuilder.(remainingM: Int) -> Unit = {},
     ) {
+        require(speedKmh > 0) { "approach 는 움직이는 차에서만 쓸 수 있습니다(speedKmh=$speedKmh)." }
         var remaining = fromM.toDouble()
         while (true) {
             val r = remaining.toInt().coerceAtLeast(toM)

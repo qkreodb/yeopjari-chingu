@@ -88,6 +88,12 @@
 
 ### E. 1차 통과 후 (11/23~12/2)
 - P0 기능을 다듬습니다. 실제 NaviHelper TBT 연결, 화면 S1~S5 완성.
+- phase3 코드 리뷰(11/14)에서 나온 것. 제출 APK와 소스를 맞추려고 접수 전에는 고치지 않았습니다.
+  - (medium) `Speaker`: Pleos 준비가 늦으면 보관해 둔 인사가 주행 중에 나와, 기본 TTS 안내와 겹칠 수 있습니다. 앱 시작 후 일정 시간이 지난 인사는 버리거나, 기본 TTS가 말하는 중이면 건너뜁니다.
+  - (low) Pleos `speak` 예외가 나면 인사가 기본 TTS로 나갑니다. 인사는 기본 TTS로 대신하지 않습니다.
+  - (low) `CoachController.acceptDisclaimer`를 두 번 누르면 인사가 두 번 나옵니다. 이미 동의했으면 바로 돌아가게 합니다.
+  - (low) `Speaker.say`의 `false` 반환과 `addLast` 사이에 경쟁이 있습니다(콜백이 메인 스레드가 아닐 때만 생깁니다).
+  - 규칙 위반(기존 코드): 로깅 없는 `runCatching` 2곳(`Speaker.kt`의 `pleos?.release()`, `CoachController.navigationVoiceActive`)에 `Log.w`를 붙입니다.
 - 12/3~4 오프라인 시연을 리허설합니다.
 
 ### 운영사무국 답변 (11/9~11/13, 메일)

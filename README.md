@@ -21,6 +21,10 @@
 
 장면별 전체 대본: [docs/demo-transcript.md](docs/demo-transcript.md)
 
+## 시연 영상
+
+- https://youtu.be/M1NmzVA1c2g (약 3분, Pleos Connect 에뮬레이터 화면 녹화. 회전 안내는 시뮬레이션 경로, 깜빡이는 Virtual Console 신호. 에뮬레이터 특성상 음성에 잡음이 있습니다)
+
 ## 제출용 APK
 
 - 위치: [`apk/박대유_옆자리친구_release.apk`](apk/)
@@ -85,6 +89,6 @@
 | 0 | 기획서 v2, 레포 생성 | 완료 (독립 평가 67점) |
 | 1 | `core` 판정 로직 + 단위 테스트 46개 | 완료 (코드 리뷰 2회, 20건 반영) |
 | 2 | Android 앱 (Pleos SDK, 화면, 신호 주입 패널) | 완료 (Pleos Connect v2.1.0 에뮬레이터에서 TTS·깜빡이·브레이크·조향 확인, PR #2) |
-| 3 | 시연 영상, 제출 자료 | 진행 중 |
+| 3 | 시연 영상, 제출 자료 | 완료 |
 
 각 단계는 구현 → 독립 리뷰 → 반영 순서로 진행합니다.

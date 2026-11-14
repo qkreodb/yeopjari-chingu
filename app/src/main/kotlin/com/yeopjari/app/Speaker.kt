@@ -57,7 +57,7 @@ class Speaker(context: Context) {
                             pleosReady = true
                             pendingGreeting.also { pendingGreeting = null }
                         }
-                        greeting?.let { say(it) }
+                        greeting?.let { sayWithPleos(it) }
                         flushWaiting()
                     }
 
@@ -78,7 +78,8 @@ class Speaker(context: Context) {
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) { speaking = false }
                 })
-                fallbackReady = true
+                // 준비 표시는 보관함과 같은 잠금 안에서 해야, speak() 가 보관한 문장을 놓치지 않는다.
+                synchronized(waiting) { fallbackReady = true }
                 flushWaiting()
             }
         }
@@ -95,18 +96,31 @@ class Speaker(context: Context) {
      * 첫 인사. Pleos 온디바이스 TTS 는 첫 문장에서 엔진을 불러오느라 20초 가까이 늦는다.
      * 앱을 켤 때 Pleos 로 한 번 말해 두면 첫 어려운 지점 안내가 제때 나온다.
      * Pleos 가 준비되기 전이면 보관했다가 준비되는 순간 Pleos 로 말한다(기본 TTS 로는 말하지 않는다).
+     * 그 전에 실제 안내가 한 번이라도 나오면 인사는 버린다. 주행 중에 인사가 안내와 겹치지 않게 하기 위해서다.
      */
     fun greet(text: String) {
         val now = synchronized(waiting) {
             if (pleosReady) true else { pendingGreeting = text; false }
         }
-        if (now) say(text)
+        if (now) sayWithPleos(text)
     }
 
     fun speak(text: String) {
-        if (!say(text)) {
-            synchronized(waiting) { waiting.addLast(SystemClock.elapsedRealtime() to text) }
+        // 준비 여부 확인과 보관을 한 잠금 안에서 해야, 그 사이 준비가 끝나 보관함을 비운 뒤에 넣는 일이 없다.
+        val ready = synchronized(waiting) {
+            pendingGreeting = null
+            val ok = pleosReady || fallbackReady
+            if (!ok) waiting.addLast(SystemClock.elapsedRealtime() to text)
+            ok
         }
+        if (ready && !say(text)) Log.w(tag, "안내를 말하지 못함: $text")
+    }
+
+    /** Pleos 로만 말한다. 실패해도 기본 TTS 로 넘기지 않는다(인사는 Pleos 엔진을 미리 올리는 용도). */
+    private fun sayWithPleos(text: String) {
+        val p = pleos ?: return
+        runCatching { p.speak(text, true) }
+            .onFailure { Log.w(tag, "Pleos TTS 인사 실패, 인사는 건너뜀", it) }
     }
 
     private fun say(text: String): Boolean {
@@ -144,6 +158,7 @@ class Speaker(context: Context) {
 
     fun release() {
         runCatching { pleos?.release() }
+            .onFailure { Log.w(tag, "Pleos TTS 해제 실패", it) }
         fallback?.shutdown()
     }
 

@@ -28,7 +28,7 @@
 ## 제출용 APK
 
 - 위치: [`apk/박대유_옆자리친구_release.apk`](apk/)
-- release 빌드, 서명됨. 패키지 `com.yeopjari.chingu`, 버전 0.1.0
+- release 빌드, 서명됨. 패키지 `com.yeopjari.chingu`, 버전 0.1.1
 
 ## 테스트 환경
 

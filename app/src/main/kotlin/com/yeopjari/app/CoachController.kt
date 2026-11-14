@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.SystemClock
+import android.util.Log
 import com.yeopjari.core.CoachEngine
 import com.yeopjari.core.Direction
 import com.yeopjari.core.FadingState
@@ -98,6 +99,8 @@ class CoachController(private val context: Context) {
     }
 
     fun acceptDisclaimer() {
+        // 버튼을 빠르게 두 번 눌러도 인사는 한 번만 한다.
+        if (accepted) return
         prefs.edit().putBoolean(KEY_DISCLAIMER, true).apply()
         _state.update { it.copy(disclaimerAccepted = true) }
         speaker.greet(Phrases.GREETING)
@@ -237,7 +240,15 @@ class CoachController(private val context: Context) {
             it.audioAttributes.usage == AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
         }
         guidance > if (speaker.speaking) 1 else 0
+    }.onFailure {
+        // 매 주기마다 불리므로 첫 실패만 남긴다. 실패하면 내비가 말하지 않는 것으로 본다.
+        if (!navVoiceFailureLogged) {
+            navVoiceFailureLogged = true
+            Log.w(TAG, "내비 음성 재생 상태를 읽지 못함", it)
+        }
     }.getOrDefault(false)
+
+    private var navVoiceFailureLogged = false
 
     private fun showNext(update: TbtUpdate) {
         val type = HardSpotType.of(update.kind)
@@ -301,5 +312,6 @@ class CoachController(private val context: Context) {
         private const val SIM_SPEED_KMH = 80.0
         private const val MAX_LOG = 30
         private const val KEY_DISCLAIMER = "disclaimer_accepted"
+        private const val TAG = "CoachController"
     }
 }

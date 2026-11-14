@@ -27,8 +27,8 @@ android {
         // Pleos 문서: 제품 앱은 API 28 이상(서명 키 로테이션 지원)
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     signingConfigs {

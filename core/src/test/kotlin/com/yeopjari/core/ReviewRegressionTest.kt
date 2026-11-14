@@ -281,6 +281,34 @@ class ReviewRegressionTest {
         )
     }
 
+    // ---- 2단계 리뷰 ----
+
+    @Test
+    fun `재탐색 완료 알림은 새 경로의 지점을 놓친 것으로 보지 않고 멘트를 한 번만 한다`() {
+        val e = CoachEngine()
+        val said = mutableListOf<Utterance>()
+        e.onVehicle(VehicleSample(0, 60.0, Gear.D, TurnSignal.OFF, false, 0.0))
+        // 옛 지점에서 벗어나며 ETA 3분 증가 → leave() 가 놓침 판정 + 멘트
+        said += e.onTbt(TbtUpdate(0, "a", ManeuverKind.IC, Direction.RIGHT, 600, 1_000))
+        said += e.onTbt(TbtUpdate(500, "b", ManeuverKind.MERGE, Direction.RIGHT, 2_000, 1_180))
+        // 그 뒤 Pleos 재탐색 완료 알림
+        said += e.onRerouteCompleted(1_000)
+        for (k in 1..40) said += e.tick(1_000 + k * 250L)
+        assertEquals(listOf(SpotResult.MISSED), e.log.outcomes.map { it.result })
+        assertEquals(1, said.count { it.kind == UtteranceKind.REROUTE })
+    }
+
+    @Test
+    fun `차속과 기어를 읽을 수 없으면 정지나 P단으로 보지 않는다`() {
+        val e = CoachEngine()
+        e.onTbt(TbtUpdate(0, "m", ManeuverKind.MERGE, Direction.RIGHT, 300, 1_000))
+        repeat(40) { k -> e.onVehicle(VehicleSample(k * 250L, null, null, TurnSignal.OFF, false, 0.0)) }
+        // 거리 추정이 불가능하므로 도달로 보지 않고, P단 처리도 하지 않는다.
+        assertTrue(e.log.outcomes.isEmpty())
+        e.onTbt(TbtUpdate(10_500, "n", ManeuverKind.TURN, Direction.LEFT, 1_000, 1_000))
+        assertEquals(SpotResult.UNCERTAIN, e.log.outcomes.single().result)
+    }
+
     @Test
     fun `연습 사다리는 깜빡이까지 확인된 통과만 센다`() {
         val log = TripLog()

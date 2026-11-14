@@ -10,6 +10,9 @@ object Phrases {
     const val DISCLAIMER =
         "옆자리 친구는 도로를 보지 못하는 보조 안내입니다. 판단과 운전 책임은 운전자에게 있습니다."
 
+    /** 앱을 켤 때 한 번. 음성 엔진을 미리 올려 첫 안내가 늦지 않게 하는 역할도 한다. */
+    const val GREETING = "어려운 곳에서만 말할게요."
+
     private fun side(d: Direction) = when (d) {
         Direction.LEFT -> "왼쪽 "
         Direction.RIGHT -> "오른쪽 "

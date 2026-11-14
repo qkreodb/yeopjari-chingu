@@ -88,6 +88,7 @@ class CoachController(private val context: Context) {
     fun start() {
         vehicle.start()
         navi.start()
+        if (accepted) speaker.greet(Phrases.GREETING)
         scope.launch {
             while (isActive) {
                 if (accepted) step(SystemClock.elapsedRealtime())
@@ -99,6 +100,7 @@ class CoachController(private val context: Context) {
     fun acceptDisclaimer() {
         prefs.edit().putBoolean(KEY_DISCLAIMER, true).apply()
         _state.update { it.copy(disclaimerAccepted = true) }
+        speaker.greet(Phrases.GREETING)
     }
 
     /** 차속 권한을 새로 받았을 때 차량 신호 구독을 다시 시작한다. */

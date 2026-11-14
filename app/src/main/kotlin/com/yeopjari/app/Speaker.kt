@@ -43,12 +43,14 @@ class Speaker(context: Context) {
                 tts.initialize(object : OnInitializeListener {
                     override fun onSuccess() {
                         // addEventListener 는 initialize 가 끝난 뒤에만 부를 수 있다(전에 부르면 예외).
-                        runCatching { tts.addEventListener(speakingListener()) }
-                            .onFailure { Log.w(tag, "Pleos TTS 이벤트 리스너 등록 실패", it) }
-                        runCatching {
+                        // 리스너나 로케일 설정이 실패하면 Pleos 를 쓰지 않고 기본 TTS 로 대신한다.
+                        // (리스너 없이 말하면 우리 목소리를 내비 음성으로 오인한다.)
+                        val configured = runCatching {
+                            tts.addEventListener(speakingListener())
                             tts.setLocale(Locale.KOREA)
                             tts.setAudioAttributes(attributes)
-                        }
+                        }.onFailure { Log.w(tag, "Pleos TTS 설정 실패, 기본 TTS 로 대신함", it) }
+                        if (configured.isFailure) return
                         pleosReady = true
                         flushWaiting()
                     }
@@ -92,7 +94,11 @@ class Speaker(context: Context) {
     private fun say(text: String): Boolean {
         val p = pleos
         // 두 번째 인자는 isFinal: true 여야 바로 읽는다. false 면 이어질 문장을 기다리느라 다음 발화 때까지 밀린다.
-        if (pleosReady && p != null && runCatching { p.speak(text, true) }.isSuccess) return true
+        if (pleosReady && p != null) {
+            val spoken = runCatching { p.speak(text, true) }
+                .onFailure { Log.w(tag, "Pleos TTS 말하기 실패, 기본 TTS 로 대신함", it) }
+            if (spoken.isSuccess) return true
+        }
         val f = fallback
         if (fallbackReady && f != null) {
             return f.speak(text, AndroidTts.QUEUE_ADD, null, text.hashCode().toString()) == AndroidTts.SUCCESS
@@ -105,7 +111,8 @@ class Speaker(context: Context) {
         val fresh = synchronized(waiting) {
             waiting.filter { now - it.first <= MAX_WAIT_MS }.also { waiting.clear() }
         }
-        fresh.forEach { say(it.second) }
+        // 한 번에 하나의 완결 요청으로 보낸다. 따로 보내면 앞 문장이 끊길 수 있다.
+        if (fresh.isNotEmpty()) say(fresh.joinToString(" ") { it.second })
     }
 
     private fun speakingListener() = object : EventListener {

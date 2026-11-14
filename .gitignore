@@ -21,3 +21,9 @@ Thumbs.db
 *.keystore
 *.jks
 secrets.properties
+
+# 제출용 release APK는 올린다
+!apk/*.apk
+
+# Kotlin 컴파일러 로그
+.kotlin/

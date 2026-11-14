@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     kotlin("android")
     kotlin("plugin.compose")
 }
+
+// release 서명 정보는 git 에 올리지 않는 local.properties 에서 읽는다(키 이름은 README 참고).
+val KEY_STORE_FILE = "release.storeFile"
+val KEY_STORE_PASSWORD = "release.storePassword"
+val KEY_ALIAS = "release.keyAlias"
+val KEY_PASSWORD = "release.keyPassword"
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val releaseStoreFile: String? = localProps.getProperty(KEY_STORE_FILE)
 
 android {
     namespace = "com.yeopjari.app"
@@ -17,9 +31,27 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        val missing = listOf(KEY_STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD).filter { localProps.getProperty(it) == null }
+        if (releaseStoreFile != null && missing.isNotEmpty()) {
+            throw GradleException("local.properties 에 release 서명 값이 빠졌습니다: $missing")
+        }
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = localProps.getProperty(KEY_STORE_PASSWORD)
+                keyAlias = localProps.getProperty(KEY_ALIAS)
+                keyPassword = localProps.getProperty(KEY_PASSWORD)
+            }
+        } else {
+            logger.warn("local.properties 에 $KEY_STORE_FILE 이 없어 release APK 를 서명하지 않습니다.")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

@@ -30,6 +30,7 @@ class Speaker(context: Context) {
     private var fallback: AndroidTts? = null
     @Volatile private var fallbackReady = false
     private val waiting = ArrayDeque<Pair<Long, String>>()
+    private var pendingGreeting: String? = null
 
     /** 지금 우리 앱이 말하는 중인지(TTS 시작~끝). 내비 음성 감지에서 우리 소리를 빼는 데 쓴다. */
     @Volatile
@@ -51,7 +52,12 @@ class Speaker(context: Context) {
                             tts.setAudioAttributes(attributes)
                         }.onFailure { Log.w(tag, "Pleos TTS 설정 실패, 기본 TTS 로 대신함", it) }
                         if (configured.isFailure) return
-                        pleosReady = true
+                        // 준비 표시와 보관된 인사 꺼내기를 한 번에 해야 그 사이에 들어온 인사를 잃지 않는다.
+                        val greeting = synchronized(waiting) {
+                            pleosReady = true
+                            pendingGreeting.also { pendingGreeting = null }
+                        }
+                        greeting?.let { say(it) }
                         flushWaiting()
                     }
 
@@ -84,6 +90,18 @@ class Speaker(context: Context) {
             fallbackReady -> "Android TTS"
             else -> "준비 중"
         }
+
+    /**
+     * 첫 인사. Pleos 온디바이스 TTS 는 첫 문장에서 엔진을 불러오느라 20초 가까이 늦는다.
+     * 앱을 켤 때 Pleos 로 한 번 말해 두면 첫 어려운 지점 안내가 제때 나온다.
+     * Pleos 가 준비되기 전이면 보관했다가 준비되는 순간 Pleos 로 말한다(기본 TTS 로는 말하지 않는다).
+     */
+    fun greet(text: String) {
+        val now = synchronized(waiting) {
+            if (pleosReady) true else { pendingGreeting = text; false }
+        }
+        if (now) say(text)
+    }
 
     fun speak(text: String) {
         if (!say(text)) {

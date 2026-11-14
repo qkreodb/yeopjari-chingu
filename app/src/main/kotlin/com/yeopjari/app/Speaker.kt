@@ -40,16 +40,11 @@ class Speaker(context: Context) {
         runCatching {
             PleosTts(context.applicationContext, Mode.ON_DEVICE).also { tts ->
                 pleos = tts
-                tts.addEventListener(object : EventListener {
-                    override fun onStart() { speaking = true }
-                    override fun onReady() = Unit
-                    override fun onDone() { speaking = false }
-                    override fun onStop() { speaking = false }
-                    override fun onError(errorType: ErrorType) { speaking = false }
-                    override fun onUpdatedRms(rms: Double) = Unit
-                })
                 tts.initialize(object : OnInitializeListener {
                     override fun onSuccess() {
+                        // addEventListener 는 initialize 가 끝난 뒤에만 부를 수 있다(전에 부르면 예외).
+                        runCatching { tts.addEventListener(speakingListener()) }
+                            .onFailure { Log.w(tag, "Pleos TTS 이벤트 리스너 등록 실패", it) }
                         runCatching {
                             tts.setLocale(Locale.KOREA)
                             tts.setAudioAttributes(attributes)
@@ -96,7 +91,8 @@ class Speaker(context: Context) {
 
     private fun say(text: String): Boolean {
         val p = pleos
-        if (pleosReady && p != null && runCatching { p.speak(text, false) }.isSuccess) return true
+        // 두 번째 인자는 isFinal: true 여야 바로 읽는다. false 면 이어질 문장을 기다리느라 다음 발화 때까지 밀린다.
+        if (pleosReady && p != null && runCatching { p.speak(text, true) }.isSuccess) return true
         val f = fallback
         if (fallbackReady && f != null) {
             return f.speak(text, AndroidTts.QUEUE_ADD, null, text.hashCode().toString()) == AndroidTts.SUCCESS
@@ -110,6 +106,15 @@ class Speaker(context: Context) {
             waiting.filter { now - it.first <= MAX_WAIT_MS }.also { waiting.clear() }
         }
         fresh.forEach { say(it.second) }
+    }
+
+    private fun speakingListener() = object : EventListener {
+        override fun onStart() { speaking = true }
+        override fun onReady() = Unit
+        override fun onDone() { speaking = false }
+        override fun onStop() { speaking = false }
+        override fun onError(errorType: ErrorType) { speaking = false }
+        override fun onUpdatedRms(rms: Double) = Unit
     }
 
     fun release() {
